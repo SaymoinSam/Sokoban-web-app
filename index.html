@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sokoban Game</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+    }
+    html, body {
+      /*------for android-----*/
+      overscroll-behavior: none;
+      /*----------------------*/
+      padding: 3px;
+      margin: 0;
+    }
+    #game-container {
+      position: relative;
+      height: 498px;
+      width: 458px;
+      color: white;
+      box-shadow: 1px 1px 3px #ccc, -1px -1px 2px #aaa;
+      border-radius: 5px;
+      padding: 2px;
+    }
+    img {
+      display: none;
+    }
+    canvas {
+      border: 2px solid green;
+      position: absolute;
+      top: 42px;
+      left: 2px;
+      border-radius: 0 0 4px 4px;
+    }
+    .centered-flex {
+      justify-content: center;
+      align-items: center;
+      display: flex;
+    }
+    #game-buttons {
+      text-shadow: 2px 2px 2px red;
+      position: absolute;
+      font-weight: bold;
+      font-size: 28px;
+      color: yellow;
+      width: 130px;
+      height: 35px;
+      left: 0;
+      top: 3px;
+    }
+    button {
+      display: block;
+      margin-left: 5px;
+      cursor: pointer;
+      background-color: orange;
+      border: none;
+      color: white;
+      font: bold 15px sans-serif;
+      padding-bottom: 4px;
+    }
+    button:last-of-type {
+      margin-right: 5px;
+    }
+    #undo-button {
+      transform: rotate(-90deg);
+      border-radius: 50%;
+    }
+    #previous-button {
+      border-radius: 50% 5px 5px 50%;
+    }
+    #restart-button {
+      border-radius: 5px;
+      padding-bottom: 2px;
+    }
+    #next-button {
+      border-radius: 5px 50% 50% 5px;
+    }
+    button:active {
+      position: relative;
+      background-color: green;
+      left: 2px;
+      top: 2px;
+    }
+    #game-statistics {
+      border-bottom: 3px double green;
+      background-color: lightgreen;
+      font: 18px Comic Sans MS;
+      padding-left: 130px;
+      height: 40px;
+      border-radius: 4px 4px 0 0;
+    }
+    #game-statistics span:not(#pushes) {
+      margin-right: 10px;
+    }
+    #overlay {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      background-color: rgba(0, 0, 0, 0.3);
+      width: 454px;
+      height: 494px;
+      font: bold 50px Comic Sans MS;
+      z-index: 1;
+      border-radius: 4px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="game-container">
+    <div id="game-buttons" class="centered-flex">
+      <button id="undo-button">&#8682;</button><button id="previous-button">&#8678;</button><button id="restart-button">&#8635;</button><button id="next-button">&#8680;</button>
+    </div>
+    <div id="game-statistics" class="centered-flex">
+      Level: <span id="game-level">1</span> Moves: <span id="game-moves">0</span> Pushes: <span id="game-pushes">0</span>
+    </div>
+    <div id="overlay" class="centered-flex">Congratulations!</div>
+    <canvas width="450" height="450"></canvas>
+    <img src="box.png">
+    <img src="golden-box.png">
+    <img src="tree.png">
+    <img src="wall.png">
+    <img src="boy.png">
+    <img src="grass.png">
+    <img src="mark.png">
+  </div>
+
+  <script>
+    var canvas = select("canvas"),
+      ctx = canvas.getContext("2d"),
+      wallImage = select("[src='wall.png']"),
+      treeImage = select("[src='tree.png']"),
+      boxImage = select("[src='box.png']"),
+      goldenBoxImage = select("[src='golden-box.png']"),
+      boyImage = select("[src='boy.png']"),
+      grassImage = select("[src='grass.png']"),
+      markImage = select("[src='mark.png']"),
+      movesOutput = select("#game-moves"),
+      pushesOutput = select("#game-pushes"),
+      levelOutput = select("#game-level"),
+      nextButton = select("#next-button"),
+      previousButton = select("#previous-button"),
+      restartButton = select("#restart-button"),
+      undoButton = select("#undo-button"),
+      gameOverlay = select("#overlay"),
+      t = treeImage, g = grassImage, w = wallImage,
+      gameObjects = [], player, markedBoxesCounter = 0,
+      gameMoves = 0, gamePushes = 0, gameLastMoves = [],
+      lastMoveIndex = -1, isDragging, touchedPoints = [],
+      gameLevel = 0, gameLevels = [], isLocked = false;
+
+    gameLevels = [
+      {//level 1
+        background: [
+          [t,t,w,w,w,t,t,t,t],[t,t,w,g,w,t,t,t,t],[t,t,w,g,w,w,w,w,t],
+          [w,w,w,g,g,g,g,w,t],[w,g,g,g,g,w,w,w,t],[w,w,w,w,g,w,t,t,t],
+          [t,t,t,w,g,w,t,t,t],[t,t,t,w,w,w,t,t,t],[t,t,t,t,t,t,t,t,t]
+        ],
+        marks: [[3,1], [1,4], [6,3], [4,6]],
+        boxes: [[3,4], [3,3], [5,3], [4,5]],
+        player: [4,4]
+      },
+      {//level 2
+        background: [
+          [w,w,w,w,w,t,t,t,t],[w,g,g,g,w,t,t,t,t],[w,g,g,g,w,t,w,w,w],
+          [w,g,g,g,w,t,w,g,w],[w,w,w,g,w,w,w,g,w],[t,w,w,g,g,g,g,g,w],
+          [t,w,g,g,g,w,g,g,w],[t,w,g,g,g,w,w,w,w],[t,w,w,w,w,w,t,t,t]
+        ],
+        marks: [[7,3], [7,4], [7,5]],
+        boxes: [[2,2], [2,3], [3,3]],
+        player: [3,2]
+      },
+      {//level 3
+        background: [
+          [t,w,w,w,w,t,t,t,t],[w,w,g,g,w,t,t,t,t],[w,g,g,g,w,t,t,t,t],
+          [w,w,g,g,w,w,t,t,t],[w,w,g,g,g,w,t,t,t],[w,g,g,g,g,w,t,t,t],
+          [w,g,g,g,g,w,t,t,t],[w,w,w,w,w,w,t,t,t],[t,t,t,t,t,t,t,t,t]
+        ],
+        marks: [[1,5], [1,6], [2,6], [3,6], [4,6]],
+        boxes: [[3,2], [2,3], [3,4], [2,5], [3,6]],
+        player: [2,2]
+      },
+      {//level 4
+        background: [
+          [t,w,w,w,w,t,t,t,t],[t,w,g,g,w,w,w,t,t],[t,w,g,g,g,g,w,w,t],
+          [w,w,w,g,w,g,w,w,t],[w,g,w,g,w,g,g,w,t],[w,g,g,g,g,w,g,w,t],
+          [w,g,g,g,g,g,g,w,t],[w,w,w,w,w,w,w,w,t],[t,t,t,t,t,t,t,t,t]
+        ],
+        marks: [[1,4], [1,5], [1,6]],
+        boxes: [[3,2], [2,5], [5,6]],
+        player: [2,1]
+      },
+      {//level 5
+        background: [
+          [t,t,w,w,w,w,w,w,t],[t,t,w,g,g,g,g,w,t],[w,w,w,g,g,g,g,w,t],
+          [w,g,g,g,g,g,g,w,t],[w,g,g,g,g,g,w,w,t],[w,w,w,w,g,g,w,t,t],
+          [t,t,t,w,w,w,w,t,t],[t,t,t,t,t,t,t,t,t],[t,t,t,t,t,t,t,t,t]
+        ],
+        marks: [[3,4], [4,4], [5,4], [4,3], [5,3]],
+        boxes: [[2,4], [3,3], [3,2], [4,2], [5,2]],
+        player: [1,3]
+      },
+      {//level 6
+        background: [
+          [t,t,w,w,w,w,w,t,t],[w,w,w,g,g,g,w,t,t],[w,g,g,g,g,g,w,w,t],
+          [w,g,g,g,g,g,g,w,t],[w,w,w,g,g,g,g,w,t],[t,t,w,g,g,g,w,w,t],
+          [t,t,w,w,w,w,w,t,t],[t,t,t,t,t,t,t,t,t],[t,t,t,t,t,t,t,t,t]
+        ],
+        marks: [[3,3], [4,2], [5,3], [4, 4]],
+        boxes: [[3,2], [4,3], [5,4], [4, 4]],
+        player: [5,1]
+      },
+      {//level 7
+        background: [
+          [t,t,w,w,w,w,t,t,t],[t,t,w,g,g,w,t,t,t],[t,w,w,g,g,w,w,t,t],
+          [t,w,g,g,g,g,w,t,t],[w,w,g,g,g,g,w,w,t],[w,g,g,w,g,g,g,w,t],
+          [w,g,g,g,g,g,g,w,t],[w,w,w,w,w,w,w,w,t],[t,t,t,t,t,t,t,t,t]
+        ],
+        marks: [[3,1], [4,1], [4,2], [5,3]],
+        boxes: [[4,3], [3,4], [4,5], [5,5]],
+        player: [3,6]
+      },
+      {//level 8
+        background: [
+          [w,w,w,w,w,w,w,w,t],[w,g,g,w,g,g,g,w,t],[w,g,g,g,g,g,g,w,t],
+          [w,g,g,g,g,g,w,w,t],[w,g,g,g,g,g,g,w,t],[w,g,g,w,g,g,g,w,t],
+          [w,w,w,w,w,w,w,w,t],[t,t,t,t,t,t,t,t,t],[t,t,t,t,t,t,t,t,t]
+        ],
+        marks: [[3,2], [3,3], [3,4], [4,2], [4,3], [4,4]],
+        boxes: [[2,2], [2,3], [2,4], [5,2], [4,3], [5,4]],
+        player: [1,2]
+      },
+      {//level 9
+        background: [
+          [w,w,w,w,w,w,t,t,t],[w,g,g,g,g,w,t,t,t],[w,g,g,g,g,w,w,t,t],
+          [w,g,g,w,g,g,w,w,w],[w,w,g,g,g,g,g,g,w],[t,w,g,g,g,g,g,g,w],
+          [t,w,w,w,w,w,w,w,w],[t,t,t,t,t,t,t,t,t],[t,t,t,t,t,t,t,t,t]
+        ],
+        marks: [[4,3], [4,4], [5,3], [5,4]],
+        boxes: [[2,2], [3,2], [4,2], [6,4]],
+        player: [3,5]
+      },
+      {//level 10
+        background: [
+          [w,w,w,w,w,w,w,t,t],[w,g,g,g,g,g,w,t,t],[w,g,g,w,g,g,w,t,t],
+          [w,g,g,g,g,g,w,t,t],[w,g,g,g,g,g,w,t,t],[w,g,g,g,g,g,w,t,t],
+          [w,g,g,w,g,g,w,t,t],[w,w,w,w,w,w,w,t,t],[t,t,t,t,t,t,t,t,t]
+        ],
+        marks: [[1,1], [1,2], [2,1], [2,2], [4,1], [4,2], [5,1], [5,2]],
+        boxes: [[3,1], [2,3], [3,3], [4,3], [2,5], [3,5], [4,5], [3,4]],
+        player: [4,6]
+      },
+      {//level 11
+        background: [
+          [t,w,w,w,w,w,t,t,t],[t,w,g,g,g,w,w,w,t],[w,w,g,w,g,g,g,w,t],
+          [w,g,g,g,g,g,g,w,t],[w,g,g,g,g,g,w,w,t],[w,w,w,g,w,g,w,t,t],
+          [t,t,w,g,g,g,w,t,t],[t,t,w,w,w,w,w,t,t],[t,t,t,t,t,t,t,t,t]
+        ],
+        marks: [[2,3], [3,3], [5,3], [5,5]],
+        boxes: [[2,3], [3,4], [4,4], [4,2]],
+        player: [3,1]
+      },
+      {//level 12
+        background: [
+          [w,w,w,w,w,w,t,t,t],[w,g,g,g,g,w,t,t,t],[w,g,g,g,g,w,t,t,t],
+          [w,w,g,g,g,w,t,t,t],[w,g,g,g,w,w,t,t,t],[w,g,g,g,w,t,t,t,t],
+          [w,g,g,g,w,t,t,t,t],[w,g,g,g,w,t,t,t,t],[w,w,w,w,w,t,t,t,t]
+        ],
+        marks: [[2,3], [2,4], [2,5], [2,6], [2,7]],
+        boxes: [[2,2], [2,3], [2,4], [2,5], [2,6]],
+        player: [4,2]
+      },
+      {//level 13
+        background: [
+          [t,t,w,w,w,w,t,t,t],[t,t,w,g,g,w,t,t,t],[w,w,w,g,g,w,w,t,t],
+          [w,g,g,g,g,g,w,t,t],[w,g,g,g,g,g,w,t,t],[w,g,g,g,g,w,w,t,t],
+          [w,w,w,g,g,w,t,t,t],[t,t,w,g,w,w,t,t,t],[t,t,w,w,w,t,t,t,t]
+        ],
+        marks: [[3,3], [3,4], [3,5], [3,6], [3,7]],
+        boxes: [[3,2], [3,3], [3,4], [3,5], [3,6]],
+        player: [5,3]
+      },
+      {//level 14
+        background: [
+          [w,w,w,w,w,t,t,t,t],[w,g,g,g,w,w,w,w,w],[w,g,w,g,w,g,g,g,w],
+          [w,g,g,g,g,g,g,g,w],[w,g,g,w,g,w,g,w,w],[w,g,g,g,g,g,g,w,t],
+          [w,g,g,g,g,w,w,w,t],[w,w,w,w,w,w,t,t,t],[t,t,t,t,t,t,t,t,t]
+        ],
+        marks: [[1,4], [2,4], [1,5], [1,6], [2,6]],
+        boxes: [[1,2], [3,5], [3,6], [6,3], [6,4]],
+        player: [3,3]
+      },
+      {//level 15
+        background: [
+          [t,w,w,w,w,w,w,t,t],[t,w,g,g,g,g,w,w,t],[w,w,g,w,w,g,g,w,t],
+          [w,g,g,g,g,g,g,w,t],[w,g,g,w,g,g,g,w,t],[w,g,g,g,g,w,w,w,t],
+          [w,w,w,w,w,w,t,t,t],[t,t,t,t,t,t,t,t,t],[t,t,t,t,t,t,t,t,t]
+        ],
+        marks: [[2,2], [2,3], [3,3]],
+        boxes: [[4,3], [4,4], [5,2]],
+        player: [3,5]
+      }
+    ];
+
+    function select(selector) {
+      return document.querySelector(selector);
+    }
+
+    class Block {
+      constructor(xb, yb, sprite, unit) {
+        this.x = xb * 50;
+        this.y = yb * 50;
+        this.sprite = sprite;
+        this.unit = unit;
+      }
+
+      draw() {
+        if(this.unit === "boy") {
+          ctx.drawImage(this.sprite, this.x - 5, this.y - 20, 60, 80);
+        }else {
+          ctx.drawImage(this.sprite, this.x, this.y, 50, 50);
+        }
+      }
+
+      move(direction) {
+        switch(direction) {
+          case 37: handleBlockMove.call(this, "left", [-50,0]); break;
+          case 39: handleBlockMove.call(this, "right", [50,0]); break;
+          case 38: handleBlockMove.call(this, "up", [0,-50]); break;
+          case 40: handleBlockMove.call(this, "down", [0,50]); break;
+        }
+      }
+
+      getSiblings() {
+        var self = this, siblings = {left: 0, right: 0, up: 0, down: 0};
+        gameObjects.forEach(function(unit) {
+          if(self.x - unit.x === 50 && self.y - unit.y === 0) {
+            siblings.left = unit;
+          }else if(self.x - unit.x === -50 && self.y - unit.y === 0) {
+            siblings.right = unit;
+          }else if(self.y - unit.y === 50 && self.x - unit.x === 0) {
+            siblings.up = unit;
+          }else if(self.y - unit.y === -50 && self.x - unit.x === 0) {
+            siblings.down = unit;
+          }
+        });
+        return siblings;
+      }
+    }
+
+    function handleBlockMove(direction, moveCoords) {
+      var siblings = this.getSiblings();
+      if(siblings[direction] === 0) {
+        this.x += moveCoords[0];
+        this.y += moveCoords[1];
+        setGameMoves(++gameMoves);
+        handleLastMove(
+          {
+            coords: {x: moveCoords[0], y: moveCoords[1]},
+            box: null
+          }
+        );
+      }else if(siblings[direction].unit !== "wall") {
+        if(this.unit === "boy" && siblings[direction].unit === "box" && siblings[direction].getSiblings()[direction].unit !== "box" && siblings[direction].getSiblings()[direction].unit !== "wall") {
+          siblings[direction].x += moveCoords[0];
+          siblings[direction].y += moveCoords[1];
+          this.x += moveCoords[0];
+          this.y += moveCoords[1];
+          setGameMoves(++gameMoves);
+          setGamePushes(++gamePushes);
+          handelMarkedBoxes();
+          handleLastMove(
+            {
+              coords: {x: moveCoords[0], y: moveCoords[1]},
+              box: siblings[direction]
+            }
+          );
+        }
+      }
+    }
+
+    window.onload = function() {
+      drawBackground();
+      drawMarks();
+      drawGameObjects();
+      player.draw();
+    }
+
+    function drawBackground() {
+      for(var i = 0;i < 9;i++) {
+        for(var j = 0;j < 9;j++) {
+          if(gameLevels[gameLevel].background[i][j] !== wallImage) {
+            ctx.drawImage(gameLevels[gameLevel].background[i][j], j * 50, i * 50, 50, 50);
+          }
+        }
+      }
+    }
+
+    function drawMarks() {
+      for(var i = 0;i < gameLevels[gameLevel].marks.length;i++) {
+        ctx.drawImage(markImage, gameLevels[gameLevel].marks[i][0] * 50, gameLevels[gameLevel].marks[i][1] * 50, 50, 50);
+      }
+    }
+
+    function createWallObjects() {
+      for(var i = 0;i < 9;i++) {
+        for(var j = 0;j < 9;j++) {
+          if(gameLevels[gameLevel].background[i][j] === wallImage) {
+            gameObjects.push(new Block(j, i, wallImage, "wall"));
+          }
+        }
+      }
+    }
+
+    function createBoxObjects() {
+      for(var i = 0;i < gameLevels[gameLevel].boxes.length;i++) {
+        gameObjects.push(new Block(gameLevels[gameLevel].boxes[i][0], gameLevels[gameLevel].boxes[i][1], boxImage, "box"));
+      }
+    }
+
+    function drawGameObjects() {
+      gameObjects.forEach(function(unit) {
+        unit.draw();
+      });
+    }
+
+    createWallObjects();
+    createBoxObjects();
+
+    player = new Block(4, 4, boyImage, "boy");
+
+    document.body.onkeyup = function(e) {
+      if(e.keyCode >= 37 && e.keyCode <= 40) {
+        handleMoveEvent(e.keyCode);
+      }else if(e.keyCode === 76) {
+        undoLastMove();
+      }else if(e.keyCode === 78) {
+        nextLevel();
+      }else if(e.keyCode === 80) {
+        previousLevel();
+      }
+      console.log(e.keyCode);
+    }
+
+    function handelMarkedBoxes() {
+      markedBoxesCounter = 0;
+      gameObjects.forEach(function(obj) {
+        if(obj.unit === "box") {
+          obj.sprite = boxImage;
+          gameLevels[gameLevel].marks.forEach(function(mark) {
+            if(mark[0] === obj.x / 50 && mark[1] === obj.y / 50) {
+              obj.sprite = goldenBoxImage;
+              markedBoxesCounter++;
+            }
+          });
+        }
+      });
+    }
+
+    function setGameMoves(moves) {
+      gameMoves = moves;
+      movesOutput.innerHTML = twoDigitsFormat(gameMoves);
+    }
+
+    function setGamePushes(pushes) {
+      gamePushes = pushes;
+      pushesOutput.innerHTML = twoDigitsFormat(gamePushes);
+    }
+
+    function twoDigitsFormat(number) {
+      return number < 10 ? "0" + number : number;
+    }
+
+    function handleLastMove(lastMove) {
+      if(gameLastMoves.length === 10) {
+        gameLastMoves.shift();
+      }
+      lastMoveIndex = gameLastMoves.push(lastMove) - 1;
+    }
+
+    function undoLastMove() {
+      var gameLastMove;
+      if(lastMoveIndex === -1) {
+        return;
+      }
+      gameLastMove = gameLastMoves.pop();
+      player.x -= gameLastMove.coords.x;
+      player.y -= gameLastMove.coords.y;
+      setGameMoves(--gameMoves);
+      if(gameLastMove.box) {
+        gameLastMove.box.x -= gameLastMove.coords.x;
+        gameLastMove.box.y -= gameLastMove.coords.y;
+        setGamePushes(--gamePushes);
+      }
+      lastMoveIndex--;
+      ctx.clearRect(0, 0, 450, 450);
+      drawBackground();
+      drawMarks();
+      handelMarkedBoxes();
+      drawGameObjects();
+      player.draw();
+    }
+
+    window.ontouchstart = function(e) {
+      isDragging = true;
+      touchedPoints = [e.touches[0].screenX, e.touches[0].screenY];
+    };
+
+    window.ontouchend = function() {
+      isDragging = false;
+    };
+
+    function determineKeyCode(sx, sy, tx, ty) {
+      return sx - tx >= 50 && sy - ty <= 25 && sy - ty >= -25 ? 39 :
+        tx - sx >= 50 && sy - ty <= 25 && sy - ty >= -25 ? 37 :
+        sy - ty >= 50 && sx - tx <= 25 && sx - tx >= -25 ? 40 :
+        ty - sy >= 50 && sx - tx <= 25 && sx - tx >= -25 ? 38 : 0;
+    }
+
+    window.ontouchmove = function(e) {
+      if(!isDragging) {
+        return;
+      }
+      var keyCode = determineKeyCode(e.touches[0].screenX, e.touches[0].screenY,
+        touchedPoints[0], touchedPoints[1]);
+      if(keyCode) {
+        handleMoveEvent(keyCode);
+      }
+    };
+
+    function nextLevel() {
+      if(gameLevel === 14) {
+        return;
+      }
+      gameLevel++;
+      newLevel();
+    }
+
+    function previousLevel() {
+      if(gameLevel === 0) {
+        return;
+      }
+      gameLevel--;
+      newLevel();
+    }
+
+    function handleMoveEvent(keyCode) {
+      if(isLocked) {
+        return;
+      }
+      player.move(keyCode);
+      ctx.clearRect(0, 0, 450, 450);
+      drawBackground();
+      drawMarks();
+      drawGameObjects();
+      player.draw();
+      isDragging = false;
+      if(markedBoxesCounter === gameLevels[gameLevel].marks.length) {
+        isLocked = true;
+        setTimeout(function() {
+          if(gameLevel === 14) {
+            congrats();
+          }else {
+            gameLevel++;
+            newLevel();
+          }
+          isLocked = false;
+        }, 1000);
+      }
+    }
+
+    function newLevel() {
+      ctx.clearRect(0, 0, 450, 450);
+      lastMoveIndex = -1;
+      gameLastMoves = [];
+      markedBoxes = 0;
+      levelOutput.innerHTML = twoDigitsFormat(gameLevel + 1);
+      gameObjects = [];
+      setGameMoves(0);
+      setGamePushes(0);
+      createWallObjects();
+      createBoxObjects();
+      drawBackground();
+      drawMarks();
+      handelMarkedBoxes();
+      drawGameObjects();
+      player.x = gameLevels[gameLevel].player[0] * 50;
+      player.y = gameLevels[gameLevel].player[1] * 50;
+      player.draw();
+    }
+
+    window.onload = function() {
+      newLevel();
+    }
+
+    function congrats() {
+      document.body.onkeyup = null;
+      window.ontouchmove = null;
+      gameOverlay.style.display = "flex";
+    }
+
+    nextButton.onclick = function() {
+      nextLevel();
+    }
+    previousButton.onclick = function() {
+      previousLevel();
+    }
+    restartButton.onclick = function() {
+      newLevel();
+    }
+    undoButton.onclick = function() {
+      undoLastMove();
+    }
+  </script>
+</body>
+</html>
